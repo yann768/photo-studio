@@ -1,0 +1,7 @@
+合照工坊 Mac 独立版（云端构建）
+下载构建产物后，先解压外层下载包，再解压 PhotoStudio-Mac-处理器.zip，将 PhotoStudio.app 拖到“应用程序”或其他文件夹打开。
+独立版包含 Python、运行依赖和两个模型；使用者不需要安装 Python，也无需 API Key。
+arm64 对应 M 系列 Mac，intel 对应 Intel Mac。本次构建环境为 macOS 15，其他系统版本尚未验证。
+未使用 Developer ID 签名或苹果公证。确认来源可信后，可按“系统设置→隐私与安全性”提示允许打开，不需要关闭整体安全保护。
+数据在 ~/Library/Application Support/PhotoStudio。关闭控制窗口可停止服务。
+云端测试涵盖两套模型推理和应用启动，不替代真实 Mac 上的拖动、排版与导出测试。
