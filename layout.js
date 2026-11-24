@@ -59,6 +59,10 @@ function syncLayout(){
   $('calibrateBody').disabled=!single||single.locked;
   $('calibrationState').textContent=single&&((single.bodyTop??0)>0||(single.bodyBottom??1)<1)?'已校准：统一大小按人物身高计算。':'尚未校准：暂按图片可见范围计算，帽子或雨伞可能影响大小。';
   setValue('personSize',single?+(single.h*100).toFixed(1):'');
+  const groups=positionRows(),ri=single?groups.findIndex(row=>row.some(p=>p.uid===single.uid)):-1,ci=ri<0?-1:groups[ri].findIndex(p=>p.uid===single.uid);
+  setValue('positionRow',ri<0?'':ri+1);setValue('positionCol',ci<0?'':ci+1);for(const id of ['positionRow','positionCol','swapPosition'])$(id).disabled=!single||single.locked||single.hidden;
+  $('positionHint').textContent=`${ri<0?'选中人物查看坐标':`当前：第 ${ri+1} 排、第 ${ci+1} 位`}；共 ${groups.length} 排，各排人数：${groups.map(g=>g.length).join('、')}。后排起，左侧起；坐标不导出。`;
+
   setValue('personLabel',single?(single.label||assetFor(single)?.label||''):'');
   setValue('labelX',single?+(single.lx*100).toFixed(1):0);setValue('labelY',single?+(single.ly*100).toFixed(1):0);
   for(const id of ['personSize','personLabel','labelX','labelY'])$(id).disabled=!single||single.locked;
@@ -94,7 +98,15 @@ $('libraryTab').onclick=()=>{libraryMode=true;$('libraryTab').classList.add('act
 $('searchPeople').oninput=renderLayers;
 $('selectAll').onclick=()=>{selection=new Set(project.people.map(p=>p.uid));syncLayout();drawPhoto();};
 $('deselectAll').onclick=()=>selectPerson('');
-$('layoutFiles').onchange=async e=>{try{tell('正在导入透明素材…');const files=[...e.target.files];for(const f of files){const a=await api('/api/upload',{name:f.name,image:await readFile(f),engine:'anime'});await refresh();if(a.status==='ready')addAsset(a);else tell('有图片不含透明背景，已加入抠图队列，请稍后从素材库添加。');}await loadPhotoImages();tell('导入完成。');}catch(e){tell(e.message);}e.target.value='';};
+$('layoutFiles').onchange=async e=>{
+ if(importBusy){tell('上一批仍在导入，请等待完成。');e.target.value='';return;}
+ importBusy=true;const files=[...e.target.files],rows=[];
+ try{for(const [i,f] of files.entries()){
+  tell(`正在导入 ${i+1}/${files.length}：${f.name}`);
+  try{if(f.size>20*1024*1024)throw Error('超过 20MB');const a=await api('/api/upload',{name:f.name,image:await readFile(f),engine:'anime'});await refresh();if(a.status==='ready'){addAsset(a);rows.push({name:f.name,status:'已加入画布'});}else rows.push({name:f.name,status:'已接收，未加入画布',reason:'图片没有透明背景，已进入抠图队列；完成后请从素材库添加'});}
+  catch(error){rows.push({name:f.name,status:'导入失败',reason:error.message});}
+ }await loadPhotoImages();tell(`选中 ${files.length} 张；加入画布 ${rows.filter(r=>r.status==='已加入画布').length} 张。详见导入结果。`);importReport(rows);}finally{importBusy=false;e.target.value='';}
+};
 $('loadFive').onclick=async()=>{try{await ensureLayout();const demo=await api('/api/demo');await refresh();if(!demo?.ids?.length)throw Error('未找到五人示例素材');
   change(()=>{project=L.defaults();project.preset='line';project.rows=1;project.gap=0;project.direction='horizontal';project.title='我们的魔法合照';project.subtitle='五位巫师 · 站在同一个故事里';project.people=demo.ids.map(id=>({uid:uid(),id,x:0,y:0,h:.5,label:'',locked:false,hidden:false,lx:0,ly:0}));project.people=L.arrange(project,assetFor);selection.clear();backgroundImage=null;});
   await loadPhotoImages();tell('已载入这次抠好的五位角色；显示名称是素材名称，可在 ID 标签中改成游戏 ID。');}catch(e){tell(e.message);}};
@@ -241,3 +253,29 @@ $('recommendCrowd').onclick=()=>change(()=>{
  Object.assign(project,{preset:'roomy',rows:best.rows,gap:0,overlap:.55,horizontalOverlap:.12,stagger:.8,rowCustom:'',direction:'horizontal',labelFollow:true,labelSize:14});
  tell(`推荐 ${best.rows} 排，横向小字标签。可修改参数后点击“应用自动站位”；本按钮不移动人物。`);
 });
+
+function positionSlots(){
+ return project.people.filter(p=>!p.hidden).slice().sort((a,b)=>{
+  const ar=Number.isFinite(a.row)?a.row:Math.round((a.y+a.h)*20),br=Number.isFinite(b.row)?b.row:Math.round((b.y+b.h)*20);
+  return ar-br||a.x-b.x||a.uid.localeCompare(b.uid);
+ });
+}
+$('swapPosition').onclick=()=>{
+ const rowNumber=Number($('positionRow').value),colNumber=Number($('positionCol').value);
+ change(()=>{
+  const selected=selectedPeople();if(selected.length!==1)throw Error('请先选中一个人物');
+  const source=selected[0],groups=positionRows();
+  if(!Number.isInteger(rowNumber)||!Number.isInteger(colNumber)||!groups[rowNumber-1]?.[colNumber-1])throw Error('目标排、位不存在，请参考各排人数');
+  const target=groups[rowNumber-1][colNumber-1];if(source.hidden||source.locked||target.locked)throw Error('请先解锁参与交换的两个人物');
+  if(source===target)return;
+  const anchor=p=>({cx:p.x+dims(p).w/2,foot:p.y+p.h*L.bodyBottom(p),row:p.row});
+  const from=anchor(source),to=anchor(target);
+  for(const [p,a]of [[source,to],[target,from]]){p.x=a.cx-dims(p).w/2;p.y=a.foot-p.h*L.bodyBottom(p);if(a.row===undefined)delete p.row;else p.row=a.row;L.fit(p,assetFor(p),project.ratio);}
+  tell(`已与 第 ${rowNumber} 排、第 ${colNumber} 位交换位置，保留各自大小、ID 和标签偏移。可撤销。`);
+ });
+};
+for(const id of ['positionRow','positionCol'])$(id).onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('swapPosition').click();}};
+
+function positionRows(){
+ const groups=new Map();for(const p of positionSlots()){const key=Number.isFinite(p.row)?p.row:Math.round((p.y+p.h)*20);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(p);}return [...groups.values()];
+}
